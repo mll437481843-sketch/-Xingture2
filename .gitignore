@@ -1,0 +1,24 @@
+# 构建产物
+*.iml
+.gradle/
+build/
+build-apk/
+captures/
+.externalNativeBuild/
+.cxx/
+*.apk
+*.zip
+
+# 本机构建用的工具链与临时文件（.probe 有 900MB 的 JDK/SDK，绝不能进仓库）
+.probe/
+.scratch/
+.tmp/
+
+# 签名与本地配置
+*.keystore
+*.jks
+local.properties
+
+# 编辑器
+.idea/
+.vscode/

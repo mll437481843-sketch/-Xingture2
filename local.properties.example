@@ -1,0 +1,2 @@
+# 只在本地构建时需要：把下面这行改成你的 Android SDK 路径
+# sdk.dir=/home/you/Android/Sdk

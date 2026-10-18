@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">QQ图片提取工具</string>
+    <string name="author_name">星球卑_PHb</string>
+    <string name="app_desc">导出 QQ 里的动图表情</string>
+</resources>

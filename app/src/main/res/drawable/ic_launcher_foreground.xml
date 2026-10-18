@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- 行星环 -->
+    <group
+        android:pivotX="54"
+        android:pivotY="54"
+        android:rotation="-20">
+        <path
+            android:fillColor="#00000000"
+            android:pathData="M23,54a31,9.8 0 1,1 62,0a31,9.8 0 1,1 -62,0"
+            android:strokeColor="#6E5FBE"
+            android:strokeWidth="3" />
+    </group>
+    <!-- 星球 -->
+    <path
+        android:fillColor="#6E5FBE"
+        android:pathData="M37,54a17,17 0 1,1 34,0a17,17 0 1,1 -34,0z" />
+</vector>
