@@ -5,7 +5,7 @@
 
 > 作者：**星球卑_PHb**
 
-现成产物：`/sdcard/Download/QQ图片提取工具-3.0.apk`（v3.0，v2 签名，minSdk 26 / targetSdk 34）
+现成产物：`QQ图片提取工具-3.0.apk`（v3.0，v2 签名，minSdk 26 / targetSdk 34）
 
 ---
 
