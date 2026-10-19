@@ -40,6 +40,71 @@ object Prefs {
         sp(c).edit().putString(KEY_ROOTS, roots.joinToString("\n")).apply()
     }
 
+
+    // ---------- 扫描来源：QQ / 微信 ----------
+
+    const val SOURCE_QQ = 0
+    const val SOURCE_WECHAT = 1
+    const val SOURCE_BOTH = 2
+
+    /** 微信端：新版本在 Android/data/com.tencent.mm，老版本在 tencent/MicroMsg。 */
+    val WECHAT_ROOTS = listOf(
+        "/sdcard/Android/data/com.tencent.mm/MicroMsg",
+        "/sdcard/tencent/MicroMsg",
+        "/sdcard/Tencent/MicroMsg",
+        // 微信里"保存到手机"的图片会落到这些目录
+        "/sdcard/Pictures/WeiXin",
+        "/sdcard/DCIM/WeiXin",
+        "/sdcard/Pictures/WeChat",
+        "/sdcard/DCIM/WeChat",
+        "/sdcard/Android/data/com.tencent.mm"
+    )
+
+    const val SOURCE_DOUYIN = 3
+    const val SOURCE_XHS = 4
+    const val SOURCE_ALL = 5
+
+    /** 抖音：缓存里大量 gif/jpg/webp，表情包和评论图都在 cache 下。 */
+    val DOUYIN_ROOTS = listOf(
+        "/sdcard/Android/data/com.ss.android.ugc.aweme",
+        "/sdcard/Pictures/抖音",
+        "/sdcard/DCIM/抖音",
+        "/sdcard/Pictures/aweme",
+        "/sdcard/DCIM/aweme"
+    )
+
+    /** 小红书：同理，图片缓存 + 手动保存目录。 */
+    val XHS_ROOTS = listOf(
+        "/sdcard/Android/data/com.xingin.xhs",
+        "/sdcard/Pictures/小红书",
+        "/sdcard/DCIM/小红书",
+        "/sdcard/Pictures/xhs",
+        "/sdcard/DCIM/xhs"
+    )
+
+    fun source(c: Context): Int = sp(c).getInt("source", SOURCE_QQ)
+
+    fun setSource(c: Context, value: Int) {
+        sp(c).edit().putInt("source", value).apply()
+    }
+
+    fun rootsFor(c: Context, source: Int): List<String> {
+        return when (source) {
+            SOURCE_WECHAT -> WECHAT_ROOTS
+            SOURCE_DOUYIN -> DOUYIN_ROOTS
+            SOURCE_XHS -> XHS_ROOTS
+            SOURCE_BOTH -> roots(c) + WECHAT_ROOTS
+            SOURCE_ALL -> roots(c) + WECHAT_ROOTS + DOUYIN_ROOTS + XHS_ROOTS
+            else -> roots(c)
+        }
+    }
+
+    fun flag(c: Context, key: String): Boolean = sp(c).getBoolean(key, false)
+
+    fun setFlag(c: Context, key: String, value: Boolean) {
+        sp(c).edit().putBoolean(key, value).apply()
+    }
+
     fun wantStatic(c: Context): Boolean = sp(c).getBoolean(KEY_STATIC, false)
 
     fun wantDedupe(c: Context): Boolean = sp(c).getBoolean("dedupe", true)

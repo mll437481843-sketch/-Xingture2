@@ -38,6 +38,11 @@
             </intent-filter>
         </activity>
 
+        <activity
+            android:name=".ViewerActivity"
+            android:exported="false"
+            android:configChanges="orientation|screenSize|keyboardHidden" />
+
         <!-- Shizuku 授权必须的 provider（官方要求原样保留） -->
         <provider
             android:name=".SafeShizukuProvider"

@@ -35,7 +35,16 @@ object Scanner {
         "/hotpic/",
         "/diskcache/",
         "/.thumb/",
-        "/thumbnails/"
+        "/thumbnails/",
+        // 微信里跟表情无关的大块缓存
+        "/cgi/",
+        "/Download/",
+        "/music/",
+        "/video/",
+        "/voice2/",
+        "/avatar/",
+        "/wxacache/",
+        "/.tmp/"
     )
 
     data class Found(
@@ -45,7 +54,9 @@ object Scanner {
         val format: String,
         val obfuscated: Boolean,
         val packId: String,
-        val packName: String
+        val packName: String,
+        val source: String,
+        val category: String
     ) {
 
         val ext: String
@@ -164,7 +175,78 @@ object Scanner {
         return sb.toString()
     }
 
-    fun classify(svc: IShell, path: String, wantStatic: Boolean, packId: String, packName: String): Found? {
+    /** 读图片真实宽高（GIF/PNG/WebP/JPEG），用来识别系统小图标。 */
+    private fun imageSize(b: ByteArray): Pair<Int, Int>? {
+        if (b.size >= 10) {
+            val header = String(b, 0, 6, Charsets.ISO_8859_1)
+            if (header == "GIF87a" || header == "GIF89a") {
+                val w = (b[6].toInt() and 0xFF) or ((b[7].toInt() and 0xFF) shl 8)
+                val h = (b[8].toInt() and 0xFF) or ((b[9].toInt() and 0xFF) shl 8)
+                return Pair(w, h)
+            }
+        }
+        if (b.size >= 24 && (b[0].toInt() and 0xFF) == 0x89 && (b[1].toInt() and 0xFF) == 0x50) {
+            val w = intOf(b, 16)
+            val h = intOf(b, 20)
+            return Pair(w, h)
+        }
+        if (b.size >= 30 && (b[0].toInt() and 0xFF) == 0x52 && (b[8].toInt() and 0xFF) == 0x57) {
+            val tag = String(b, 12, 4, Charsets.ISO_8859_1)
+            if (tag == "VP8X") {
+                val w = 1 + ((b[24].toInt() and 0xFF) or ((b[25].toInt() and 0xFF) shl 8) or ((b[26].toInt() and 0xFF) shl 16))
+                val h = 1 + ((b[27].toInt() and 0xFF) or ((b[28].toInt() and 0xFF) shl 8) or ((b[29].toInt() and 0xFF) shl 16))
+                return Pair(w, h)
+            }
+        }
+        if (b.size >= 4 && (b[0].toInt() and 0xFF) == 0xFF && (b[1].toInt() and 0xFF) == 0xD8) {
+            var i = 2
+            while (i + 9 < b.size) {
+                if ((b[i].toInt() and 0xFF) != 0xFF) { i++; continue }
+                val marker = b[i + 1].toInt() and 0xFF
+                val len = ((b[i + 2].toInt() and 0xFF) shl 8) or (b[i + 3].toInt() and 0xFF)
+                if (marker in 0xC0..0xCF && marker != 0xC4 && marker != 0xC8 && marker != 0xCC) {
+                    val h = ((b[i + 5].toInt() and 0xFF) shl 8) or (b[i + 6].toInt() and 0xFF)
+                    val w = ((b[i + 7].toInt() and 0xFF) shl 8) or (b[i + 8].toInt() and 0xFF)
+                    return Pair(w, h)
+                }
+                i += 2 + len
+            }
+        }
+        return null
+    }
+
+    private fun intOf(b: ByteArray, offset: Int): Int {
+        return ((b[offset].toInt() and 0xFF) shl 24) or ((b[offset + 1].toInt() and 0xFF) shl 16) or
+            ((b[offset + 2].toInt() and 0xFF) shl 8) or (b[offset + 3].toInt() and 0xFF)
+    }
+
+    /** 按路径判断这是"我保存的 / 表情包 / 聊天图 / 系统资源 / 其他"。 */
+    fun categorize(path: String): String {
+        if (path.contains("/Pictures/") || path.contains("/DCIM/")) return "我保存的"
+        if (path.contains("/.emotionsm/")) return "表情包"
+        val systemParts = listOf(
+            "/wxanewfiles/", "/wxafiles/", "/appbrand/", "/wallet/", "/mapsdk/", "/xlog/",
+            "/openapi", "/ThumbVideoCache/", "/chatroom_notice/", "/package/", "/recbiz/",
+            "/selectrecord/", "/.sticker_recommended_pics/", "/assets/", "/bundled", "/head/"
+        )
+        for (part in systemParts) {
+            if (path.contains(part)) return "系统资源"
+        }
+        if (path.contains("/chatpic/") || path.contains("/photo/") || path.contains("/thumb/") ||
+            path.contains("/image/") || path.contains("/image2/") || path.contains("/cache/") ||
+            path.contains("/sfs/")
+        ) return "聊天图"
+        return "其他"
+    }
+
+    fun classify(
+        svc: IShell,
+        path: String,
+        wantStatic: Boolean,
+        packId: String,
+        packName: String,
+        sourceName: String
+    ): Found? {
         if (isExcludedPath(path)) return null
         val name = File(path).name
         if (name.isEmpty()) return null
@@ -178,7 +260,19 @@ object Scanner {
             if (head.size < 12) return null
             val detected = detect(head) ?: return null
             if (!wantStatic && (detected.first == "PNG" || detected.first == "WebP")) return null
-            return Found(path, stat.st_size, stat.st_mtime * 1000L, detected.first, detected.second, packId, packName)
+            var category = categorize(path)
+            val size = imageSize(head)
+            val animated = detected.first == "GIF" || detected.first == "APNG" || detected.first == "动态WebP"
+            if (size != null) {
+                val maxSide = Math.max(size.first, size.second)
+                // 很小的图基本是 UI 图标/角标，不是用户要的表情或照片
+                if (maxSide in 1..64 || (stat.st_size < 2048L && !animated)) category = "系统资源"
+                if (category == "聊天图" && maxSide in 1..96) category = "系统资源"
+            }
+            return Found(
+                path, stat.st_size, stat.st_mtime * 1000L, detected.first, detected.second,
+                packId, packName, sourceName, category
+            )
         } catch (t: Throwable) {
             return null
         } finally {

@@ -5,11 +5,13 @@
 
 > 作者：**星球卑_PHb**
 
-现成产物：`QQ图片提取工具-3.0.apk`（v3.0，v2 签名，minSdk 26 / targetSdk 34）
+现成产物：`/sdcard/Download/QQ图片提取工具-3.0.apk`（v3.0，v2 签名，minSdk 26 / targetSdk 34）
 
 ---
 
 ## 一、用起来
+
+> v4.0 起支持两端：顶部「QQ / 微信 / 两边都扫」三选一，默认 QQ。微信为实验性支持。
 
 1. 装 **Shizuku**：<https://github.com/RikkaApps/Shizuku/releases>
    开发者选项 → 打开「无线调试」→ Shizuku 里配对 → 启动。
@@ -60,6 +62,9 @@ App 用 Shizuku 的 shell 身份（uid 2000）只读打开这些文件，还原�
 ---
 
 ## 五、已知边界
+
+- 微信：新版把聊天媒体放在应用内部存储，shell 读不到；外置目录 com.tencent.mm/MicroMsg 与旧版 tencent/MicroMsg 里能读到的表情会正常导出
+
 
 - 「我的表情」这类**收藏**存在 QQ 内部数据库（需 root 或走 QQ 界面转发），缓存里只有"显示过"的表情
 - 不解析 QQ 数据库、不解密私有容器格式
