@@ -4,41 +4,45 @@ import android.content.Context
 import android.graphics.Color
 import android.graphics.drawable.GradientDrawable
 
-/** 以 Monet 柔和色板为准的形状工厂。 */
 object Ui {
 
     fun dp(context: Context, value: Int): Int = (value * context.resources.displayMetrics.density).toInt()
 
     fun round(radiusDp: Int, fill: Int, context: Context, strokeDp: Int = 0, strokeColor: Int = 0): GradientDrawable {
-        val drawable = GradientDrawable()
-        drawable.shape = GradientDrawable.RECTANGLE
-        drawable.cornerRadius = dp(context, radiusDp).toFloat()
-        drawable.setColor(fill)
-        if (strokeDp > 0) drawable.setStroke(dp(context, strokeDp), strokeColor)
-        return drawable
+        val d = GradientDrawable()
+        d.shape = GradientDrawable.RECTANGLE
+        d.cornerRadius = dp(context, radiusDp).toFloat()
+        d.setColor(fill)
+        if (strokeDp > 0) d.setStroke(dp(context, strokeDp), strokeColor)
+        return d
     }
 
-    /** 普通卡片：很淡的主色面 + 一点点描边。 */
-    fun card(context: Context, radiusDp: Int = 24): GradientDrawable {
-        return round(radiusDp, Monet.surfaceContainer, context, 1, Monet.outlineVariant)
-    }
+    /** 卡片 / 底栏：很淡的面 + 一根发丝描边 */
+    fun card(context: Context, radiusDp: Int = 22): GradientDrawable =
+        round(radiusDp, Monet.surfaceContainer, context, 1, Monet.hairline)
 
-    /** 状态卡：稍浓一点的主色面（仍是柔和调）。 */
-    fun heroCard(context: Context): GradientDrawable {
-        return round(24, Monet.softPrimary, context, 1, withAlpha(Monet.primary, 40))
-    }
+    /** 主按钮：淡主色填充 + 深色字（清透） */
+    fun filled(context: Context): GradientDrawable = round(18, Monet.primaryFill, context)
 
-    fun filled(context: Context): GradientDrawable = round(22, Monet.primary, context)
+    fun soft(context: Context): GradientDrawable = round(18, Monet.softPrimary, context)
 
-    fun tonal(context: Context): GradientDrawable = round(22, Monet.softSecondary, context)
+    /** 胶囊 chip */
+    fun chip(context: Context, active: Boolean): GradientDrawable =
+        if (active) round(16, Monet.softPrimary, context, 1, Monet.primary)
+        else round(16, Color.TRANSPARENT, context, 1, Monet.hairline)
 
-    fun row(context: Context, isSelected: Boolean): GradientDrawable {
-        return if (isSelected) {
-            round(20, Monet.softSecondary, context, 1, withAlpha(Monet.primary, 60))
-        } else {
-            round(20, Color.TRANSPARENT, context)
-        }
-    }
+    /** 宫格单元 */
+    fun tile(context: Context, active: Boolean): GradientDrawable =
+        if (active) round(18, Monet.softPrimary, context, 2, Monet.primary)
+        else round(18, Monet.surfaceContainer, context, 1, Monet.hairline)
 
-    fun withAlpha(color: Int, alpha: Int): Int = Color.argb(alpha, Color.red(color), Color.green(color), Color.blue(color))
+    /** 列表行 */
+    fun row(context: Context, active: Boolean): GradientDrawable =
+        if (active) round(16, Monet.softPrimary, context, 2, Monet.primary)
+        else round(16, Color.TRANSPARENT, context)
+
+    fun badge(context: Context): GradientDrawable = round(9, Monet.primaryFill, context)
+
+    fun withAlpha(color: Int, alpha: Int): Int =
+        Color.argb(alpha, Color.red(color), Color.green(color), Color.blue(color))
 }

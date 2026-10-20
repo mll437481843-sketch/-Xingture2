@@ -59,6 +59,13 @@ object Scanner {
         val category: String
     ) {
 
+        /** 本次扫描是否第一次出现（"新增" 标识） */
+        var isNew: Boolean = false
+
+        /** 稳定身份：路径 + 大小 */
+        val key: String get() = path + "|" + size
+
+
         val ext: String
             get() = when (format) {
                 "GIF" -> "gif"

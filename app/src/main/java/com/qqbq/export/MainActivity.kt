@@ -25,11 +25,11 @@ import android.widget.CheckBox
 import android.widget.EditText
 import android.widget.FrameLayout
 import android.widget.GridView
+import android.widget.HorizontalScrollView
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ListView
 import android.widget.ScrollView
-import android.widget.SeekBar
 import android.widget.TextView
 import android.widget.Toast
 import rikka.shizuku.Shizuku
@@ -40,7 +40,7 @@ class MainActivity : Activity() {
 
     private val main = Handler(Looper.getMainLooper())
     private val thumbExec = Executors.newSingleThreadExecutor()
-    private val thumbCache = LruCache<String, Bitmap>(240)
+    private val thumbCache = LruCache<String, Bitmap>(300)
 
     private lateinit var statusBar: TextView
     private lateinit var gridView: GridView
@@ -48,25 +48,28 @@ class MainActivity : Activity() {
     private lateinit var contentBox: FrameLayout
     private lateinit var gridAdapter: GridAdapter
     private lateinit var listAdapter: FoundAdapter
-    private lateinit var logText: TextView
-    private val navButtons = LinkedHashMap<String, Button>()
-    private val sourceButtons = LinkedHashMap<Int, Button>()
-    private val actionButtons = ArrayList<Button>()
+    private lateinit var exportButton: TextView
+    private val newChips = LinkedHashMap<Int, TextView>()
+    private val categoryChips = LinkedHashMap<String, TextView>()
+    private val viewChips = LinkedHashMap<Int, TextView>()
+    private val actionViews = ArrayList<View>()
 
     private val items = ArrayList<Scanner.Found>()
     private val shown = ArrayList<Scanner.Found>()
     private val selected = HashSet<String>()
-    private var filterMode = "全部"
-    private var columns = 4
-    private var gridMode = true
+    private val logBuffer = StringBuilder()
+
+    private var filterCategory = "全部"
+    private var filterNew = 0
+    private var viewMode = 3
     private var busy = false
 
     private val biliUrl = "https://space.bilibili.com/1967666609"
 
     private val permissionListener = Shizuku.OnRequestPermissionResultListener { requestCode, grantResult ->
         if (requestCode == Shell.REQUEST_CODE) {
-            if (grantResult == PackageManager.PERMISSION_GRANTED) writeLog("Shizuku 授权成功")
-            else writeLog("Shizuku 授权被拒绝")
+            if (grantResult == PackageManager.PERMISSION_GRANTED) writeLog("授权成功")
+            else writeLog("授权被拒绝")
             refreshStatus()
         }
     }
@@ -86,7 +89,7 @@ class MainActivity : Activity() {
             Shizuku.addBinderDeadListener(binderDeadListener)
             Shizuku.addRequestPermissionResultListener(permissionListener)
         } catch (t: Throwable) {
-            writeLog("Shizuku 初始化失败：" + t.javaClass.simpleName)
+            writeLog("Shizuku 初始化失败")
         }
 
         if (Build.VERSION.SDK_INT <= Build.VERSION_CODES.P) {
@@ -96,9 +99,9 @@ class MainActivity : Activity() {
         }
 
         refreshStatus()
-        refreshSourceButtons()
-        refreshNavButtons()
-        updateStatusBar()
+        refreshChips()
+        setViewMode(viewMode)
+        applyFilter()
         maybeShowNotice()
     }
 
@@ -113,83 +116,76 @@ class MainActivity : Activity() {
         super.onDestroy()
     }
 
-    // ================= 布局（PCL 风格） =================
+    // ================= 界面骨架 =================
 
     private fun buildUi() {
-        val rootView = LinearLayout(this)
-        rootView.orientation = LinearLayout.VERTICAL
-        rootView.setBackgroundColor(Monet.surface)
+        val root = LinearLayout(this)
+        root.orientation = LinearLayout.VERTICAL
+        root.setBackgroundColor(Monet.surface)
 
-        // ---- 顶栏 ----
-        val topBar = LinearLayout(this)
-        topBar.orientation = LinearLayout.HORIZONTAL
-        topBar.gravity = Gravity.CENTER_VERTICAL
-        topBar.setPadding(dp(14), dp(10), dp(10), dp(8))
-        topBar.background = Ui.card(this, 0)
+        // —— 头部：标题 + 副标题 + 设置 ——
+        val header = LinearLayout(this)
+        header.orientation = LinearLayout.HORIZONTAL
+        header.gravity = Gravity.CENTER_VERTICAL
+        header.setPadding(dp(20), dp(18), dp(10), dp(10))
 
         val titles = LinearLayout(this)
         titles.orientation = LinearLayout.VERTICAL
         val title = TextView(this)
         title.text = "QQ图片提取工具"
-        title.textSize = 18f
+        title.textSize = 21f
         title.setTextColor(Monet.onSurface)
         title.typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
         title.setOnLongClickListener {
             showGuide(0)
             true
         }
-        val subtitle = TextView(this)
-        subtitle.text = "作者 星球卑_PHb"
-        subtitle.textSize = 10f
-        subtitle.setTextColor(Monet.onSurfaceVariant)
+        val sub = TextView(this)
+        sub.text = "作者 星球卑_PHb"
+        sub.textSize = 10.5f
+        sub.setTextColor(Monet.onSurfaceVariant)
         titles.addView(title)
-        titles.addView(subtitle)
-        topBar.addView(titles, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        titles.addView(sub)
+        header.addView(titles, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        header.addView(plainButton("⋯") { showSettings() }, LinearLayout.LayoutParams(dp(40), dp(36)))
+        root.addView(header, wrap())
 
-        topBar.addView(iconButton("网格") { setGridMode(true) }, wrap(4))
-        topBar.addView(iconButton("列表") { setGridMode(false) }, wrap(4))
-        topBar.addView(iconButton("设置") { showSettings() }, wrap(4))
-        rootView.addView(topBar, wrap())
+        // —— 状态一行 ——
+        statusBar = TextView(this)
+        statusBar.textSize = 11f
+        statusBar.setTextColor(Monet.onSurfaceVariant)
+        statusBar.setPadding(dp(20), 0, dp(20), dp(10))
+        root.addView(statusBar, wrap())
 
-        // ---- 来源条 ----
-        val sourceBar = LinearLayout(this)
-        sourceBar.orientation = LinearLayout.HORIZONTAL
-        sourceBar.setPadding(dp(10), 0, dp(10), dp(6))
-        sourceBar.addView(chip("QQ", Prefs.SOURCE_QQ), chipParams())
-        sourceBar.addView(chip("微信", Prefs.SOURCE_WECHAT), chipParams())
-        sourceBar.addView(chip("抖音", Prefs.SOURCE_DOUYIN), chipParams())
-        sourceBar.addView(chip("小红书", Prefs.SOURCE_XHS), chipParams())
-        sourceBar.addView(chip("QQ+微信", Prefs.SOURCE_BOTH), chipParams())
-        sourceBar.addView(chip("全部", Prefs.SOURCE_ALL), chipParams())
-        val sourceScroll = android.widget.HorizontalScrollView(this)
-        sourceScroll.isHorizontalScrollBarEnabled = false
-        sourceScroll.addView(sourceBar)
-        rootView.addView(sourceScroll, wrap())
+        // —— 第一排：新增 / 已看过 ——
+        root.addView(chipRow { row ->
+            addChip(row, newChips, 0, "全部") { setFilterNew(0) }
+            addChip(row, newChips, 1, "新增") { setFilterNew(1) }
+            addChip(row, newChips, 2, "已看过") { setFilterNew(2) }
+        }, chipRowParams())
 
-        // ---- 主体：左导航 + 内容 ----
-        val body = LinearLayout(this)
-        body.orientation = LinearLayout.HORIZONTAL
-        body.setPadding(dp(8), 0, dp(8), 0)
+        // —— 第二排：分类 ——
+        root.addView(chipRow { row ->
+            val cats = listOf("全部", "我保存的", "表情包", "聊天图", "其他")
+            for (cat in cats) {
+                addChip(row, categoryChips, cat, cat) { setFilterCategory(cat) }
+            }
+        }, chipRowParams())
 
-        val nav = LinearLayout(this)
-        nav.orientation = LinearLayout.VERTICAL
-        nav.background = Ui.card(this, 18)
-        nav.setPadding(dp(4), dp(6), dp(4), dp(6))
-        for (mode in listOf("全部", "我保存的", "表情包", "聊天图", "其他", "含系统")) {
-            val button = navButton(mode)
-            navButtons[mode] = button
-            nav.addView(button, navParams())
-        }
-        val navScroll = ScrollView(this)
-        navScroll.isVerticalScrollBarEnabled = false
-        navScroll.addView(nav)
-        body.addView(navScroll, LinearLayout.LayoutParams(dp(96), ViewGroup.LayoutParams.MATCH_PARENT))
+        // —— 第三排：浏览模式 ——
+        root.addView(chipRow { row ->
+            addViewChip(row, 0, "列表")
+            addViewChip(row, 1, "四宫格")
+            addViewChip(row, 2, "九宫格")
+            addViewChip(row, 3, "多宫格")
+        }, chipRowParams())
 
+        // —— 内容区 ——
         contentBox = FrameLayout(this)
-        contentBox.setPadding(dp(6), 0, 0, 0)
+        contentBox.setPadding(dp(12), dp(4), dp(12), 0)
 
         gridView = GridView(this)
-        gridView.numColumns = columns
+        gridView.numColumns = 4
         gridView.horizontalSpacing = dp(6)
         gridView.verticalSpacing = dp(6)
         gridView.setSelector(android.R.color.transparent)
@@ -217,132 +213,99 @@ class MainActivity : Activity() {
         }
         contentBox.addView(listView, FrameLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+        root.addView(contentBox, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
 
-        body.addView(contentBox, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f))
-        rootView.addView(body, LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f).also { it.topMargin = dp(4) })
-
-        // ---- 底部状态栏 ----
+        // —— 底部：扫描 + 导出 ——
         val bottom = LinearLayout(this)
         bottom.orientation = LinearLayout.HORIZONTAL
         bottom.gravity = Gravity.CENTER_VERTICAL
-        bottom.setPadding(dp(12), dp(6), dp(10), dp(8))
+        bottom.setPadding(dp(16), dp(10), dp(16), dp(16))
 
-        statusBar = TextView(this)
-        statusBar.textSize = 10.5f
-        statusBar.setTextColor(Monet.onSurfaceVariant)
-        bottom.addView(statusBar, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        val scan = pillButton("扫描", true) { onScan() }
+        bottom.addView(scan, LinearLayout.LayoutParams(0, dp(46), 1f).also { it.rightMargin = dp(8) })
 
-        val sizeLabel = TextView(this)
-        sizeLabel.text = "大小"
-        sizeLabel.textSize = 10f
-        sizeLabel.setTextColor(Monet.onSurfaceVariant)
-        bottom.addView(sizeLabel, wrap(4))
+        exportButton = pillButton("导出选中", false) { onExport() }
+        bottom.addView(exportButton, LinearLayout.LayoutParams(0, dp(46), 1f))
+        root.addView(bottom, wrap())
 
-        val seek = SeekBar(this)
-        seek.max = 6
-        seek.progress = columns - 2
-        seek.layoutParams = LinearLayout.LayoutParams(dp(96), ViewGroup.LayoutParams.WRAP_CONTENT)
-        seek.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
-            override fun onProgressChanged(bar: SeekBar?, progress: Int, fromUser: Boolean) {
-                columns = progress + 2
-                gridView.numColumns = columns
-                gridAdapter.notifyDataSetChanged()
-            }
-
-            override fun onStartTrackingTouch(bar: SeekBar?) {}
-
-            override fun onStopTrackingTouch(bar: SeekBar?) {}
-        })
-        bottom.addView(seek, wrap(2))
-
-        bottom.addView(iconButton("扫描") { onScan() }, wrap(4))
-        bottom.addView(iconButton("导出") { onExport() }, wrap(4))
-        rootView.addView(bottom, wrap())
-
-        setContentView(rootView)
+        setContentView(root)
     }
 
-    private fun setGridMode(grid: Boolean) {
-        gridMode = grid
-        gridView.visibility = if (grid) View.VISIBLE else View.GONE
-        listView.visibility = if (grid) View.GONE else View.VISIBLE
-        writeLog(if (grid) "切换到宫格模式" else "切换到列表模式")
-    }
-
-    private fun navButton(mode: String): Button {
-        val button = Button(this)
-        button.text = mode
-        button.isAllCaps = false
-        button.textSize = 10.5f
-        button.stateListAnimator = null
-        button.minHeight = 0
-        button.minimumHeight = dp(38)
-        button.setPadding(0, dp(6), 0, dp(6))
-        button.setOnClickListener {
-            filterMode = mode
-            refreshNavButtons()
-            applyFilter()
-        }
-        actionButtons.add(button)
-        return button
-    }
-
-    private fun chip(label: String, value: Int): Button {
-        val button = Button(this)
-        button.text = label
-        button.isAllCaps = false
-        button.textSize = 11f
-        button.stateListAnimator = null
-        button.minHeight = 0
-        button.minimumHeight = dp(32)
-        button.setPadding(dp(10), dp(4), dp(10), dp(4))
-        button.setOnClickListener { setSource(value) }
-        sourceButtons[value] = button
-        actionButtons.add(button)
-        return button
-    }
-
-    private fun iconButton(label: String, onClick: () -> Unit): Button {
-        val button = Button(this)
-        button.text = label
-        button.isAllCaps = false
-        button.textSize = 11f
-        button.setTextColor(Monet.onSurface)
-        button.background = Ui.tonal(this)
-        button.stateListAnimator = null
-        button.minHeight = 0
-        button.minimumHeight = dp(32)
-        button.setPadding(dp(8), dp(4), dp(8), dp(4))
-        button.setOnClickListener { onClick() }
-        actionButtons.add(button)
-        return button
-    }
-
-    private fun navParams(): LinearLayout.LayoutParams {
-        val params = LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
-        params.setMargins(0, dp(2), 0, dp(2))
-        return params
-    }
-
-    private fun chipParams(): LinearLayout.LayoutParams {
-        val params = LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT)
-        params.setMargins(dp(3), 0, dp(3), 0)
-        return params
-    }
-
-    private fun wrap(horizontalDp: Int = 0): LinearLayout.LayoutParams {
-        val params = LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT)
-        params.setMargins(horizontalDp, dp(2), horizontalDp, dp(2))
-        return params
-    }
+    private fun wrap(): LinearLayout.LayoutParams =
+        LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
 
     private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()
 
-    // ================= 状态与筛选 =================
+    private fun chipRowParams(): LinearLayout.LayoutParams {
+        val params = wrap()
+        params.setMargins(dp(16), 0, dp(16), dp(8))
+        return params
+    }
+
+    private fun chipRow(add: (LinearLayout) -> Unit): HorizontalScrollView {
+        val scroll = HorizontalScrollView(this)
+        scroll.isHorizontalScrollBarEnabled = false
+        val row = LinearLayout(this)
+        row.orientation = LinearLayout.HORIZONTAL
+        add(row)
+        scroll.addView(row)
+        return scroll
+    }
+
+    private fun <K> addChip(
+        row: LinearLayout,
+        map: LinkedHashMap<K, TextView>,
+        key: K,
+        label: String,
+        onClick: () -> Unit
+    ) {
+        val chip = TextView(this)
+        chip.text = label
+        chip.textSize = 12f
+        chip.gravity = Gravity.CENTER
+        chip.setPadding(dp(14), dp(7), dp(14), dp(7))
+        chip.background = Ui.chip(this, false)
+        chip.setTextColor(Monet.onSurfaceVariant)
+        chip.setOnClickListener { onClick() }
+        val params = LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+        params.rightMargin = dp(8)
+        row.addView(chip, params)
+        map[key] = chip
+        actionViews.add(chip)
+    }
+
+    private fun addViewChip(row: LinearLayout, mode: Int, label: String) {
+        addChip(row, viewChips, mode, label) { setViewMode(mode) }
+    }
+
+    private fun plainButton(label: String, onClick: () -> Unit): TextView {
+        val tv = TextView(this)
+        tv.text = label
+        tv.textSize = 18f
+        tv.gravity = Gravity.CENTER
+        tv.setTextColor(Monet.onSurfaceVariant)
+        tv.background = Ui.round(14, Color.TRANSPARENT, this)
+        tv.setOnClickListener { onClick() }
+        actionViews.add(tv)
+        return tv
+    }
+
+    private fun pillButton(label: String, primary: Boolean, onClick: () -> Unit): TextView {
+        val tv = TextView(this)
+        tv.text = label
+        tv.textSize = 14f
+        tv.gravity = Gravity.CENTER
+        tv.typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
+        tv.setTextColor(if (primary) Monet.onPrimaryFill else Monet.primary)
+        tv.background = if (primary) Ui.filled(this) else Ui.soft(this)
+        tv.setOnClickListener { onClick() }
+        actionViews.add(tv)
+        return tv
+    }
+
+    // ================= 状态 / 筛选 =================
 
     private fun refreshStatus() {
         val alive = Shell.binderAlive()
@@ -350,79 +313,88 @@ class MainActivity : Activity() {
         ShizukuState.text = when {
             !alive -> "Shizuku 未运行"
             !granted -> "Shizuku 待授权"
-            else -> "Shizuku 已授权"
+            else -> "已连接"
         }
         updateStatusBar()
     }
 
     private fun updateStatusBar() {
-        var mine = 0
-        var pack = 0
-        var chat = 0
-        var sys = 0
-        var other = 0
-        for (item in items) {
-            when (item.category) {
-                "我保存的" -> mine++
-                "表情包" -> pack++
-                "聊天图" -> chat++
-                "系统资源" -> sys++
-                else -> other++
-            }
+        var fresh = 0
+        for (item in items) if (item.isNew) fresh++
+        statusBar.text = ShizukuState.text + " · 共 " + items.size + " · 新增 " + fresh + " · 已选 " + selected.size
+
+        newChips[0]?.text = "全部 " + items.size
+        newChips[1]?.text = "新增 " + fresh
+        newChips[2]?.text = "已看过 " + (items.size - fresh)
+
+        exportButton.text = if (selected.isEmpty()) "导出选中" else "导出选中 " + selected.size
+    }
+
+    private fun refreshChips() {
+        for ((key, chip) in newChips) {
+            val active = key == filterNew
+            chip.background = Ui.chip(this, active)
+            chip.setTextColor(if (active) Monet.primary else Monet.onSurfaceVariant)
         }
-        statusBar.text = ShizukuState.text + " · 已选 " + selected.size + " / 显示 " + shown.size +
-            "（我保存 " + mine + " 表情包 " + pack + " 聊天图 " + chat + " 其他 " + other + " 系统 " + sys + "）"
-        for ((mode, button) in navButtons) {
-            val count = when (mode) {
-                "全部" -> mine + pack + chat + other
-                "我保存的" -> mine
-                "表情包" -> pack
-                "聊天图" -> chat
-                "其他" -> other
-                "含系统" -> mine + pack + chat + other + sys
-                else -> 0
-            }
-            button.text = mode + " " + count
+        for ((key, chip) in categoryChips) {
+            val active = key == filterCategory
+            chip.background = Ui.chip(this, active)
+            chip.setTextColor(if (active) Monet.primary else Monet.onSurfaceVariant)
+        }
+        for ((key, chip) in viewChips) {
+            val active = key == viewMode
+            chip.background = Ui.chip(this, active)
+            chip.setTextColor(if (active) Monet.primary else Monet.onSurfaceVariant)
         }
     }
 
-    private fun refreshNavButtons() {
-        for ((mode, button) in navButtons) {
-            val active = mode == filterMode
-            button.setTextColor(if (active) Monet.onPrimary else Monet.onSurface)
-            button.background = if (active) Ui.filled(this) else Ui.round(16, Color.TRANSPARENT, this)
-        }
+    private fun setFilterNew(value: Int) {
+        filterNew = value
+        refreshChips()
+        applyFilter()
     }
 
-    private fun refreshSourceButtons() {
-        val source = Prefs.source(this)
-        for ((value, button) in sourceButtons) {
-            val active = value == source
-            button.setTextColor(if (active) Monet.onPrimary else Monet.onSurface)
-            button.background = if (active) Ui.filled(this) else Ui.tonal(this)
+    private fun setFilterCategory(cat: String) {
+        filterCategory = cat
+        refreshChips()
+        applyFilter()
+    }
+
+    private fun setViewMode(mode: Int) {
+        viewMode = mode
+        refreshChips()
+        when (mode) {
+            0 -> {
+                gridView.visibility = View.GONE
+                listView.visibility = View.VISIBLE
+            }
+            else -> {
+                gridView.visibility = View.VISIBLE
+                listView.visibility = View.GONE
+                gridView.numColumns = mode + 1
+                gridAdapter.notifyDataSetChanged()
+            }
         }
     }
 
     private fun applyFilter() {
         shown.clear()
         for (item in items) {
-            val keep = when (filterMode) {
-                "含系统" -> true
+            val catOk = when (filterCategory) {
                 "全部" -> item.category != "系统资源"
-                else -> item.category == filterMode
+                else -> item.category == filterCategory
             }
-            if (keep) shown.add(item)
+            if (!catOk) continue
+            val newOk = when (filterNew) {
+                1 -> item.isNew
+                2 -> !item.isNew
+                else -> true
+            }
+            if (newOk) shown.add(item)
         }
         gridAdapter.notifyDataSetChanged()
         listAdapter.notifyDataSetChanged()
         updateStatusBar()
-    }
-
-    private fun setSource(value: Int) {
-        Prefs.setSource(this, value)
-        refreshSourceButtons()
-        writeLog("扫描来源：" + sourceName(value))
-        if (value != Prefs.SOURCE_QQ && value != Prefs.SOURCE_BOTH) maybeExplainOtherApps(value)
     }
 
     private fun sourceName(value: Int): String = when (value) {
@@ -434,7 +406,13 @@ class MainActivity : Activity() {
         else -> "QQ"
     }
 
-    // ================= 选择 =================
+    private fun setSource(value: Int) {
+        Prefs.setSource(this, value)
+        writeLog("扫描来源：" + sourceName(value))
+        if (value != Prefs.SOURCE_QQ && value != Prefs.SOURCE_BOTH) maybeExplainOtherApps(value)
+    }
+
+    // ================= 选择 / 预览 =================
 
     private fun toggle(position: Int) {
         if (position !in shown.indices) return
@@ -472,32 +450,69 @@ class MainActivity : Activity() {
         startActivity(intent)
     }
 
-    // ================= 设置页 =================
+    // ================= 设置 =================
 
     private fun showSettings() {
         val box = LinearLayout(this)
         box.orientation = LinearLayout.VERTICAL
-        box.setPadding(dp(16), dp(10), dp(16), dp(10))
+        box.setPadding(dp(18), dp(8), dp(18), dp(8))
 
-        val hint = TextView(this)
-        hint.textSize = 11f
-        hint.setTextColor(Monet.onSurfaceVariant)
-        hint.text = "扫描来源与目录、诊断、使用引导都在这里。"
-        box.addView(hint, wrap())
+        val sourceLabel = TextView(this)
+        sourceLabel.text = "扫描来源"
+        sourceLabel.textSize = 11f
+        sourceLabel.setTextColor(Monet.onSurfaceVariant)
+        box.addView(sourceLabel, wrap())
+
+        val sourceRow = LinearLayout(this)
+        sourceRow.orientation = LinearLayout.HORIZONTAL
+        val sources = listOf(
+            Prefs.SOURCE_QQ to "QQ",
+            Prefs.SOURCE_WECHAT to "微信",
+            Prefs.SOURCE_DOUYIN to "抖音",
+            Prefs.SOURCE_XHS to "小红书",
+            Prefs.SOURCE_BOTH to "QQ+微信",
+            Prefs.SOURCE_ALL to "全部"
+        )
+        for ((value, label) in sources) {
+            val chip = TextView(this)
+            chip.text = label
+            chip.textSize = 11f
+            chip.setPadding(dp(10), dp(6), dp(10), dp(6))
+            val active = Prefs.source(this) == value
+            chip.background = Ui.chip(this, active)
+            chip.setTextColor(if (active) Monet.primary else Monet.onSurfaceVariant)
+            chip.setOnClickListener {
+                setSource(value)
+                for (i in 0 until sourceRow.childCount) {
+                    val child = sourceRow.getChildAt(i) as TextView
+                    val isActive = child === chip
+                    child.background = Ui.chip(this, isActive)
+                    child.setTextColor(if (isActive) Monet.primary else Monet.onSurfaceVariant)
+                }
+            }
+            val params = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+            params.rightMargin = dp(6)
+            sourceRow.addView(chip, params)
+        }
+        val sourceScroll = HorizontalScrollView(this)
+        sourceScroll.isHorizontalScrollBarEnabled = false
+        sourceScroll.addView(sourceRow)
+        box.addView(sourceScroll, wrap())
 
         val row1 = LinearLayout(this)
         row1.orientation = LinearLayout.HORIZONTAL
-        row1.addView(iconButton("授权") { onAuth() }, chipParams())
-        row1.addView(iconButton("诊断") { onDiag() }, chipParams())
-        row1.addView(iconButton("目录") { onEditRoots() }, chipParams())
+        row1.addView(chipAction("授权") { onAuth() }, chipLP())
+        row1.addView(chipAction("诊断") { onDiag() }, chipLP())
+        row1.addView(chipAction("目录") { onEditRoots() }, chipLP())
         box.addView(row1, wrap())
 
         val row2 = LinearLayout(this)
         row2.orientation = LinearLayout.HORIZONTAL
-        row2.addView(iconButton("导出清单") { onInventory() }, chipParams())
-        row2.addView(iconButton("使用引导") { showGuide(0) }, chipParams())
-        row2.addView(iconButton("全选") { selectAll(true) }, chipParams())
-        row2.addView(iconButton("全不选") { selectAll(false) }, chipParams())
+        row2.addView(chipAction("导出清单") { onInventory() }, chipLP())
+        row2.addView(chipAction("使用引导") { showGuide(0) }, chipLP())
+        row2.addView(chipAction("全选") { selectAll(true) }, chipLP())
+        row2.addView(chipAction("全不选") { selectAll(false) }, chipLP())
         box.addView(row2, wrap())
 
         val chk = CheckBox(this)
@@ -511,17 +526,16 @@ class MainActivity : Activity() {
 
         val log = TextView(this)
         log.textSize = 9.5f
-        log.setTextColor(Monet.onSurfaceVariant)
         log.typeface = Typeface.MONOSPACE
-        log.text = if (logText.text.isNullOrEmpty()) "（暂无日志）" else logText.text
-        logTextRef = log
-        val scroll = ScrollView(this)
-        scroll.addView(log)
-        box.addView(scroll, LinearLayout.LayoutParams(
+        log.setTextColor(Monet.onSurfaceVariant)
+        log.text = if (logBuffer.isEmpty()) "（暂无日志）" else logBuffer.toString()
+        val logScroll = ScrollView(this)
+        logScroll.addView(log)
+        box.addView(logScroll, LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, dp(150)))
 
         val bili = TextView(this)
-        bili.text = "B 站主页：space.bilibili.com/1967666609（点此处打开）"
+        bili.text = "B 站主页 space.bilibili.com/1967666609 ↗"
         bili.textSize = 11f
         bili.setTextColor(Monet.primary)
         bili.setPadding(0, dp(6), 0, 0)
@@ -535,17 +549,35 @@ class MainActivity : Activity() {
             .show()
     }
 
-    private var logTextRef: TextView? = null
+    private fun chipLP(): LinearLayout.LayoutParams {
+        val params = LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+        params.rightMargin = dp(6)
+        params.topMargin = dp(6)
+        return params
+    }
+
+    private fun chipAction(label: String, onClick: () -> Unit): TextView {
+        val chip = TextView(this)
+        chip.text = label
+        chip.textSize = 11.5f
+        chip.setPadding(dp(12), dp(7), dp(12), dp(7))
+        chip.background = Ui.chip(this, false)
+        chip.setTextColor(Monet.onSurface)
+        chip.setOnClickListener { onClick() }
+        return chip
+    }
+
+    // ================= 日志 =================
 
     private fun writeLog(line: String) {
         main.post {
-            val current = if (logText.text.isNullOrEmpty()) "" else logText.text.toString()
-            val merged = if (current.isEmpty()) line else current + "\n" + line
-            val lines = merged.split("\n")
-            logText.text = if (lines.size > 200) lines.subList(lines.size - 200, lines.size).joinToString("\n") else merged
-            logTextRef?.text = logText.text
+            logBuffer.append(line).append('\n')
+            if (logBuffer.length > 24000) logBuffer.delete(0, logBuffer.length - 20000)
         }
     }
+
+    private fun logTextContent(): String = logBuffer.toString()
 
     private fun toast(message: String) {
         main.post { Toast.makeText(this, message, Toast.LENGTH_SHORT).show() }
@@ -555,7 +587,7 @@ class MainActivity : Activity() {
 
     private fun onAuth() {
         if (!Shell.binderAlive()) {
-            writeLog("没检测到 Shizuku，先安装并启动它")
+            writeLog("没检测到 Shizuku")
             openShizuku()
             return
         }
@@ -569,7 +601,7 @@ class MainActivity : Activity() {
                 }
             }
         } else {
-            writeLog("向 Shizuku 申请权限…")
+            writeLog("申请 Shizuku 权限…")
             Shell.requestPermission()
         }
     }
@@ -579,7 +611,7 @@ class MainActivity : Activity() {
             val svc = Shell.ensureService()
             if (svc == null) {
                 writeLog("拿不到 shell 服务，先授权")
-                toast("先点「设置 → 授权」")
+                toast("先授权")
                 return@worker
             }
             val source = Prefs.source(this)
@@ -613,6 +645,15 @@ class MainActivity : Activity() {
             for (item in found) unique[item.path] = item
             found.clear()
             found.addAll(unique.values)
+
+            // 标记"本次新增"：之前没见过的 key
+            val seen = Prefs.seenKeys(this)
+            var fresh = 0
+            for (item in found) {
+                item.isNew = !seen.contains(item.key)
+                if (item.isNew) fresh++
+            }
+            Prefs.markSeen(this, found.map { it.key })
             found.sortByDescending { it.mtime }
 
             main.post {
@@ -622,10 +663,10 @@ class MainActivity : Activity() {
                 applyFilter()
                 if (items.isNotEmpty()) Prefs.setFlag(this, "ok_scan", true)
             }
-            writeLog("扫描完成：检查 " + scanned + "，命中 " + found.size + "，跳过 " + skipped)
+            writeLog("扫描完成：检查 " + scanned + "，命中 " + found.size + "（新增 " + fresh + "），跳过 " + skipped)
             main.post {
                 try {
-                    (application as App).publish("qqbq-scan.txt", logText.text.toString())
+                    (application as App).publish("qqbq-scan.txt", logTextContent())
                 } catch (ignored: Throwable) {
                 }
             }
@@ -730,9 +771,6 @@ class MainActivity : Activity() {
             val roots = ArrayList<String>()
             roots.addAll(Prefs.rootsFor(this, Prefs.source(this)))
             roots.add("/sdcard/Android/data/com.tencent.mobileqq")
-            roots.add("/sdcard/Android/data/com.tencent.mm")
-            roots.add("/sdcard/Android/data/com.ss.android.ugc.aweme")
-            roots.add("/sdcard/Android/data/com.xingin.xhs")
             val sb = StringBuilder()
             sb.append("kind,root_or_dir,path,size,mtime,hex32,typeRaw,typeDec\n")
             var rows = 0
@@ -760,7 +798,7 @@ class MainActivity : Activity() {
             val intent = packageManager.getLaunchIntentForPackage("moe.shizuku.privileged.api")
             if (intent == null) writeLog("本机没装 Shizuku") else startActivity(intent)
         } catch (t: Throwable) {
-            writeLog("打开 Shizuku 失败：" + t.message)
+            writeLog("打开 Shizuku 失败")
         }
     }
 
@@ -791,8 +829,8 @@ class MainActivity : Activity() {
         if (sp.getBoolean("notice_shown_v1", false)) return
         val text = StringBuilder()
             .append("1. 需要 Shizuku（无线调试授权）才能读取 QQ / 微信 / 抖音 / 小红书 的缓存。\n\n")
-            .append("2. 扫描的是各 App 缓存目录，**可能扫到一些你不需要的文件**；")
-            .append("结果已按「我保存的 / 表情包 / 聊天图 / 其他 / 系统资源」分类，系统资源默认隐藏。\n\n")
+            .append("2. 扫描的是各 App 缓存目录，可能扫到一些你不需要的文件；")
+            .append("结果按「我保存的 / 表情包 / 聊天图 / 其他」分类，并用「新增 / 已看过」标出本次新出现的。\n\n")
             .append("3. 全程只读：不修改、不删除任何 App 数据；不联网、不上传。\n\n")
             .append("4. 导出位置：相册 Pictures/QQ表情/\n\n")
             .append("5. 收藏类表情存在应用内部存储，没有 root 读不到，需要先在 App 里使用或保存一次。\n\n")
@@ -814,11 +852,11 @@ class MainActivity : Activity() {
 
     private fun showGuide(step: Int) {
         val steps = arrayOf(
-            "① 准备 Shizuku\n\n启动 Shizuku（开发者选项 → 无线调试 → 配对 → 启动），回到本 App 点「设置」→「授权」。",
-            "② 选来源\n\n顶部一排 chip：QQ / 微信 / 抖音 / 小红书 / QQ+微信 / 全部。只用一个 App 时建议单选。",
-            "③ 扫描\n\n点右下「扫描」。文件多会慢，日志在「设置」里能看到。",
-            "④ 宫格浏览\n\n左栏是分类（全部 / 我保存的 / 表情包 / 聊天图 / 其他 / 含系统）。底部「大小」滑块可调宫格列数。",
-            "⑤ 预览与导出\n\n点一格 = 勾选；长按 = 全屏预览（左右滑动、页内可导出）；勾完点「导出」到相册。"
+            "① 准备 Shizuku\n\n启动 Shizuku（开发者选项 → 无线调试 → 配对 → 启动），回到本 App 点右上「⋯」→「授权」。",
+            "② 扫描\n\n点底部「扫描」。第一次会久一点，进度在「⋯」里的日志能看到。",
+            "③ 认标记\n\n顶部第一排：「全部 / 新增 / 已看过」——「新增」就是这次新扫到的。",
+            "④ 分类\n\n第二排：「我保存的 / 表情包 / 聊天图 / 其他」，把系统缓存和你自己的东西分开。",
+            "⑤ 换排版\n\n第三排：「列表 / 四宫格 / 九宫格 / 多宫格」。点一格 = 勾选，长按 = 全屏预览。"
         )
         val index = step.coerceIn(0, steps.size - 1)
         val builder = AlertDialog.Builder(this)
@@ -833,15 +871,20 @@ class MainActivity : Activity() {
 
     private fun maybeExplainOtherApps(value: Int) {
         when (value) {
-            Prefs.SOURCE_DOUYIN -> explainOnce("douyin_explained_v1", "关于抖音",
-                "抖音的图片/表情缓存在 cache 目录，扫到的可能很多。\n\n" +
-                    "结果已分类，系统小图标会归到「系统资源」默认隐藏。")
-            Prefs.SOURCE_XHS -> explainOnce("xhs_explained_v1", "关于小红书",
-                "小红书图片缓存在外置目录。\n\n结果已分类，想找自己的图点左栏「我保存的」。")
-            else -> explainOnce("wechat_explained_v1", "关于微信",
+            Prefs.SOURCE_DOUYIN -> explainOnce(
+                "douyin_explained_v1", "关于抖音",
+                "抖音的图片缓存在 cache 目录，扫到的可能很多。\n\n系统小图标会归到「系统资源」，默认不显示。"
+            )
+            Prefs.SOURCE_XHS -> explainOnce(
+                "xhs_explained_v1", "关于小红书",
+                "小红书图片缓存在外置目录。\n\n想找自己的图点第二排「我保存的」。"
+            )
+            else -> explainOnce(
+                "wechat_explained_v1", "关于微信",
                 "微信的自定义表情在应用内部存储（/data/data/com.tencent.mm），没有 root 读不到。\n\n" +
-                    "能拿到的是微信外置目录里的聊天图和你手动保存的图片（Pictures/WeiXin）。\n\n" +
-                    "要导出微信表情：先发给文件传输助手 → 长按保存到手机 → 回来选「微信」扫描。")
+                    "能拿到的是外置目录里的聊天图和你手动保存的图片。\n\n" +
+                    "要导出微信表情：先发给文件传输助手 → 长按保存到手机 → 回来选「微信」扫描。"
+            )
         }
     }
 
@@ -881,10 +924,18 @@ class MainActivity : Activity() {
     }
 
     private fun setActionsEnabled(enabled: Boolean) {
-        for (button in actionButtons) button.isEnabled = enabled
+        for (view in actionViews) view.isEnabled = enabled
     }
 
     // ================= 适配器 =================
+
+    private inner class GridHolder(
+        val cell: FrameLayout,
+        val image: ImageView,
+        val label: TextView,
+        val newBadge: TextView,
+        val checkBadge: TextView
+    )
 
     private inner class GridAdapter : BaseAdapter() {
         override fun getCount(): Int = shown.size
@@ -892,41 +943,72 @@ class MainActivity : Activity() {
         override fun getItemId(position: Int): Long = position.toLong()
 
         override fun getView(position: Int, convertView: View?, parent: ViewGroup?): View {
-            val box: LinearLayout
-            val image: ImageView
-            val label: TextView
+            val holder: GridHolder
             if (convertView == null) {
-                box = LinearLayout(this@MainActivity)
+                val cell = FrameLayout(this@MainActivity)
+                val box = LinearLayout(this@MainActivity)
                 box.orientation = LinearLayout.VERTICAL
-                box.setPadding(dp(2), dp(2), dp(2), dp(2))
-                image = ImageView(this@MainActivity)
+                box.setPadding(dp(4), dp(4), dp(4), dp(6))
+
+                val image = ImageView(this@MainActivity)
                 image.scaleType = ImageView.ScaleType.FIT_CENTER
                 box.addView(image, LinearLayout.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT, dp(96)))
-                label = TextView(this@MainActivity)
+                    ViewGroup.LayoutParams.MATCH_PARENT, dp(78)))
+
+                val label = TextView(this@MainActivity)
                 label.textSize = 9f
                 label.maxLines = 1
-                label.setTextColor(Monet.onSurfaceVariant)
                 label.gravity = Gravity.CENTER
+                label.setTextColor(Monet.onSurfaceVariant)
                 box.addView(label, LinearLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
-                box.tag = arrayOf(image, label)
-                box.layoutParams = AbsListView.LayoutParams(
+
+                cell.addView(box, FrameLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+
+                val newBadge = TextView(this@MainActivity)
+                newBadge.text = "新"
+                newBadge.textSize = 8.5f
+                newBadge.setPadding(dp(5), dp(1), dp(5), dp(1))
+                newBadge.setTextColor(Monet.onPrimaryFill)
+                newBadge.background = Ui.badge(this@MainActivity)
+                val badgeParams = FrameLayout.LayoutParams(
+                    ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+                badgeParams.leftMargin = dp(7)
+                badgeParams.topMargin = dp(7)
+                cell.addView(newBadge, badgeParams)
+
+                val checkBadge = TextView(this@MainActivity)
+                checkBadge.text = "✓"
+                checkBadge.textSize = 10f
+                checkBadge.gravity = Gravity.CENTER
+                checkBadge.setTextColor(Monet.onPrimaryFill)
+                checkBadge.background = Ui.badge(this@MainActivity)
+                val checkParams = FrameLayout.LayoutParams(dp(18), dp(18))
+                checkParams.gravity = Gravity.END or Gravity.TOP
+                checkParams.rightMargin = dp(7)
+                checkParams.topMargin = dp(7)
+                cell.addView(checkBadge, checkParams)
+
+                cell.layoutParams = AbsListView.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
-            } else {
-                box = convertView as LinearLayout
-                val pair = box.tag as Array<*>
-                image = pair[0] as ImageView
-                label = pair[1] as TextView
+
+                holder = GridHolder(cell, image, label, newBadge, checkBadge)
+                cell.tag = holder
+                return cell
             }
+            holder = convertView.tag as GridHolder
+
             val item = shown[position]
             val isSelected = selected.contains(item.path)
-            box.background = if (isSelected) Ui.round(16, Monet.softSecondary, this@MainActivity, 2, Monet.primary)
-            else Ui.round(16, Color.TRANSPARENT, this@MainActivity)
-            label.text = if (isSelected) "✓ " + item.format else item.format
-            label.setTextColor(if (isSelected) Monet.primary else Monet.onSurfaceVariant)
-            bindThumb(image, item)
-            return box
+            holder.image.parent?.let { (it as View).background = null }
+            holder.image.background = Ui.tile(this@MainActivity, isSelected)
+            holder.image.setPadding(dp(6), dp(6), dp(6), dp(6))
+            holder.label.text = if (isSelected) "✓ " + item.category else item.category
+            holder.newBadge.visibility = if (item.isNew) View.VISIBLE else View.GONE
+            holder.checkBadge.visibility = if (isSelected) View.VISIBLE else View.GONE
+            bindThumb(holder.image, item)
+            return convertView
         }
     }
 
@@ -934,7 +1016,9 @@ class MainActivity : Activity() {
         val row: LinearLayout,
         val thumb: ImageView,
         val title: TextView,
-        val sub: TextView
+        val sub: TextView,
+        val newBadge: TextView,
+        val check: TextView
     )
 
     private inner class FoundAdapter : BaseAdapter() {
@@ -949,7 +1033,7 @@ class MainActivity : Activity() {
                 row = LinearLayout(this@MainActivity)
                 row.orientation = LinearLayout.HORIZONTAL
                 row.gravity = Gravity.CENTER_VERTICAL
-                row.setPadding(dp(10), dp(8), dp(8), dp(8))
+                row.setPadding(dp(12), dp(10), dp(10), dp(10))
 
                 val thumb = ImageView(this@MainActivity)
                 thumb.layoutParams = LinearLayout.LayoutParams(dp(44), dp(44))
@@ -958,7 +1042,7 @@ class MainActivity : Activity() {
 
                 val texts = LinearLayout(this@MainActivity)
                 texts.orientation = LinearLayout.VERTICAL
-                texts.setPadding(dp(10), 0, dp(6), 0)
+                texts.setPadding(dp(12), 0, dp(6), 0)
                 val title = TextView(this@MainActivity)
                 title.textSize = 13f
                 title.setTextColor(Monet.onSurface)
@@ -969,10 +1053,23 @@ class MainActivity : Activity() {
                 texts.addView(sub)
                 row.addView(texts, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
 
-                row.layoutParams = AbsListView.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
-                holder = RowHolder(row, thumb, title, sub)
-                row.tag = holder
+                val newBadge = TextView(this@MainActivity)
+                newBadge.text = "新"
+                newBadge.textSize = 9f
+                newBadge.setPadding(dp(6), dp(1), dp(6), dp(1))
+                newBadge.setTextColor(Monet.onPrimaryFill)
+                newBadge.background = Ui.badge(this@MainActivity)
+                row.addView(newBadge)
+
+                val check = TextView(this@MainActivity)
+                check.text = "✓"
+                check.textSize = 13f
+                check.setTextColor(Monet.primary)
+                check.setPadding(dp(8), 0, dp(2), 0)
+                row.addView(check)
+
+                row.tag = RowHolder(row, thumb, title, sub, newBadge, check)
+                holder = row.tag as RowHolder
             } else {
                 row = convertView as LinearLayout
                 holder = row.tag as RowHolder
@@ -980,8 +1077,10 @@ class MainActivity : Activity() {
             val item = shown[position]
             val isSelected = selected.contains(item.path)
             holder.row.background = Ui.row(this@MainActivity, isSelected)
-            holder.title.text = "[" + item.category + "] " + item.label
-            holder.sub.text = item.source + " · " + item.format + " · " + item.sizeText
+            holder.title.text = item.packName + " · " + item.fileName
+            holder.sub.text = item.category + " · " + item.format + " · " + item.sizeText
+            holder.newBadge.visibility = if (item.isNew) View.VISIBLE else View.GONE
+            holder.check.visibility = if (isSelected) View.VISIBLE else View.INVISIBLE
             bindThumb(holder.thumb, item)
             return row
         }
@@ -1005,14 +1104,15 @@ class MainActivity : Activity() {
                 options.inSampleSize = 3
                 val bitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.size, options) ?: return@submit
                 thumbCache.put(item.path, bitmap)
-                main.post { if (view.tag == item.path) view.setImageBitmap(bitmap) }
+                main.post {
+                    if (view.tag == item.path) view.setImageBitmap(bitmap)
+                }
             } catch (t: Throwable) {
             }
         }
     }
 }
 
-/** 用一个简单单例把 Shizuku 状态带到状态栏，避免多处重复计算。 */
 object ShizukuState {
     var text: String = "Shizuku 未运行"
 }

@@ -105,6 +105,20 @@ object Prefs {
         sp(c).edit().putBoolean(key, value).apply()
     }
 
+    /** 已经扫描到过的文件 key 集合，用来区分"本次新增" */
+    fun seenKeys(c: Context): Set<String> {
+        val stored = sp(c).getStringSet("seen_keys", null) ?: return HashSet()
+        return HashSet(stored)
+    }
+
+    fun markSeen(c: Context, keys: Collection<String>) {
+        if (keys.isEmpty()) return
+        val current = HashSet(seenKeys(c))
+        if (current.size > 60000) current.clear()
+        current.addAll(keys)
+        sp(c).edit().putStringSet("seen_keys", current).apply()
+    }
+
     fun wantStatic(c: Context): Boolean = sp(c).getBoolean(KEY_STATIC, false)
 
     fun wantDedupe(c: Context): Boolean = sp(c).getBoolean("dedupe", true)
